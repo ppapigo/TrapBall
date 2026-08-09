@@ -22,6 +22,7 @@ export default class GameScene extends Phaser.Scene {
     this.cpuPoints = GAME.initialBuildPoints;
     this.lastPlayerKick = 0;
     this.lastCpuKick = 0;
+    this.cpuReactionUntil = 0;
     this.lastTrailTime = 0;
     this.selectedObstacle = 'WALL';
     this.wallRotation = 0;
@@ -234,7 +235,7 @@ export default class GameScene extends Phaser.Scene {
     toBall.normalize().scale(speed);
     this.cpu.body.setVelocity(toBall.x, toBall.y);
 
-    if (distance <= GAME.kickRange && time - this.lastCpuKick >= GAME.cpuKickCooldown) {
+    if (distance <= GAME.cpuKickRange && time >= this.cpuReactionUntil && time - this.lastCpuKick >= GAME.cpuKickCooldown) {
       const targetY = Phaser.Math.Clamp(360 + Phaser.Math.Between(-45, 45), GAME.goal.top + 20, GAME.goal.bottom - 20);
       const kick = new Phaser.Math.Vector2(25 - this.ball.x, targetY - this.ball.y).normalize();
       this.ball.body.setVelocity(kick.x * GAME.kickStrength, kick.y * GAME.kickStrength);
@@ -264,6 +265,7 @@ export default class GameScene extends Phaser.Scene {
     kick.normalize();
     this.ball.body.setVelocity(kick.x * GAME.kickStrength, kick.y * GAME.kickStrength);
     this.lastPlayerKick = now;
+    this.cpuReactionUntil = now + GAME.cpuReactionDelay;
     this.playKickFeedback();
     this.playOptionalSound(SOUND_KEYS.kick);
   }
@@ -289,7 +291,7 @@ export default class GameScene extends Phaser.Scene {
   playKickFeedback() {
     this.tweens.killTweensOf(this.player);
     this.player.setScale(1);
-    this.tweens.add({ targets: this.player, scale: 1.12, duration: 45, yoyo: true });
+    this.tweens.add({ targets: this.player, scale: 1.05, duration: 40, yoyo: true });
     this.createImpactRing(this.ball.x, this.ball.y, 0x9ed0ff, 16, 150);
   }
 
@@ -368,6 +370,7 @@ export default class GameScene extends Phaser.Scene {
     this.lastCpuPositionCheck = this.time.now;
     this.cpuCheckPosition.set(this.cpu.x, this.cpu.y);
     this.cpuStuckUntil = 0;
+    this.cpuReactionUntil = 0;
     this.ballStillSince = 0;
     this.bannerText.setText('KICK OFF!').setVisible(true);
     this.time.delayedCall(500, () => {
