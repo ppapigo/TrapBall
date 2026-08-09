@@ -10,8 +10,10 @@ export const GAME = {
   kickRange: 70,
   kickCooldown: 350,
   wallCost: 2,
+  bumperCost: 3,
   initialBuildPoints: 10,
   buildPointsPerRound: 4,
   winScore: 3,
-  wall: { width: 90, height: 24 }
+  wall: { width: 90, height: 24 },
+  bumper: { radius: 24, ballBounceSpeed: 590, playerPushSpeed: 180 }
 };

@@ -1,5 +1,7 @@
 # TrapBall
 
+웹에서 플레이: [https://ppapigo.github.io/TrapBall/](https://ppapigo.github.io/TrapBall/)
+
 Phaser 3 + JavaScript + Vite로 만든 2D 탑다운 1대1 축구 게임 MVP입니다.
 
 ## 로컬 실행

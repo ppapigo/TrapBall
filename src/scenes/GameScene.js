@@ -16,9 +16,16 @@ export default class GameScene extends Phaser.Scene {
     this.cpuPoints = GAME.initialBuildPoints;
     this.lastPlayerKick = 0;
     this.lastCpuKick = 0;
+    this.selectedObstacle = 'WALL';
+    this.ballStillSince = 0;
+    this.lastCpuPositionCheck = 0;
+    this.cpuCheckPosition = new Phaser.Math.Vector2(1020, 380);
+    this.cpuStuckUntil = 0;
+    this.cpuDetourSign = 1;
 
     this.drawField();
     this.wallGroup = this.physics.add.staticGroup();
+    this.bumperGroup = this.physics.add.staticGroup();
     this.createActors();
     this.createControls();
     this.createUI();
@@ -29,12 +36,17 @@ export default class GameScene extends Phaser.Scene {
     this.physics.add.collider(this.player, this.wallGroup);
     this.physics.add.collider(this.cpu, this.wallGroup);
     this.physics.add.collider(this.ball, this.wallGroup);
+    this.physics.add.collider(this.player, this.bumperGroup, this.onActorBumper, null, this);
+    this.physics.add.collider(this.cpu, this.bumperGroup, this.onActorBumper, null, this);
+    this.physics.add.collider(this.ball, this.bumperGroup, this.onBallBumper, null, this);
     this.physics.add.collider(this.player, this.cpu);
     this.physics.add.collider(this.player, this.ball);
     this.physics.add.collider(this.cpu, this.ball);
 
     this.preview = this.add.rectangle(0, 0, GAME.wall.width, GAME.wall.height, 0x9aa0a6, 0.55)
       .setStrokeStyle(2, 0xffffff).setDepth(5);
+    this.bumperPreview = this.add.circle(0, 0, GAME.bumper.radius, 0xf2b84b, 0.55)
+      .setStrokeStyle(2, 0xffffff).setDepth(5).setVisible(false);
     this.aimLine = this.add.graphics().setDepth(6);
 
     this.input.mouse?.disableContextMenu();
@@ -90,6 +102,8 @@ export default class GameScene extends Phaser.Scene {
 
   createControls() {
     this.keys = this.input.keyboard.addKeys('W,A,S,D');
+    this.wallKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ONE);
+    this.bumperKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.TWO);
   }
 
   createUI() {
@@ -111,20 +125,34 @@ export default class GameScene extends Phaser.Scene {
       this.player.body.setVelocity(0);
       this.cpu.body.setVelocity(0);
       this.ball.body.setVelocity(0);
+      if (Phaser.Input.Keyboard.JustDown(this.wallKey)) {
+        this.selectedObstacle = 'WALL';
+        this.updateUI();
+      }
+      if (Phaser.Input.Keyboard.JustDown(this.bumperKey)) {
+        this.selectedObstacle = 'BUMPER';
+        this.updateUI();
+      }
       this.updatePreview();
       if (Phaser.Input.Keyboard.JustDown(this.enterKey)) this.startPlay();
       return;
     }
     this.preview.setVisible(false);
+    this.bumperPreview.setVisible(false);
     if (this.phase !== PHASE.PLAY) return;
 
     this.updatePlayer(time);
     this.updateCpu(time);
     this.capBallSpeed();
+    this.recoverStuckBall(time);
     this.checkGoal();
   }
 
   updatePlayer(time) {
+    if (this.player.bumpUntil > time) {
+      this.player.body.setVelocity(this.player.bumpVelocity.x, this.player.bumpVelocity.y);
+      return;
+    }
     let x = (this.keys.D.isDown ? 1 : 0) - (this.keys.A.isDown ? 1 : 0);
     let y = (this.keys.S.isDown ? 1 : 0) - (this.keys.W.isDown ? 1 : 0);
     const direction = new Phaser.Math.Vector2(x, y);
@@ -138,9 +166,27 @@ export default class GameScene extends Phaser.Scene {
   }
 
   updateCpu(time) {
+    if (this.cpu.bumpUntil > time) {
+      this.cpu.body.setVelocity(this.cpu.bumpVelocity.x, this.cpu.bumpVelocity.y);
+      return;
+    }
     const toBall = new Phaser.Math.Vector2(this.ball.x - this.cpu.x, this.ball.y - this.cpu.y);
     const distance = toBall.length();
     if (distance > 1) toBall.normalize();
+    if (time - this.lastCpuPositionCheck >= 700) {
+      const moved = Phaser.Math.Distance.Between(this.cpu.x, this.cpu.y, this.cpuCheckPosition.x, this.cpuCheckPosition.y);
+      if (moved < 7 && distance > GAME.kickRange) {
+        this.cpuStuckUntil = time + 900;
+        this.cpuDetourSign *= -1;
+      }
+      this.cpuCheckPosition.set(this.cpu.x, this.cpu.y);
+      this.lastCpuPositionCheck = time;
+    }
+    if (time < this.cpuStuckUntil) {
+      const detourX = -toBall.y * this.cpuDetourSign;
+      const detourY = toBall.x * this.cpuDetourSign;
+      toBall.add(new Phaser.Math.Vector2(detourX, detourY).scale(0.75));
+    }
     // Add a small vertical bias when stuck behind a wall.
     if (this.cpu.body.blocked.left || this.cpu.body.blocked.right) toBall.y += this.cpu.y < 360 ? 0.65 : -0.65;
     toBall.normalize().scale(GAME.cpuSpeed);
@@ -161,7 +207,7 @@ export default class GameScene extends Phaser.Scene {
     }
     if (pointer.button !== 0) return;
     if (this.phase === PHASE.BUILD) {
-      this.placePlayerWall(pointer.worldX, pointer.worldY);
+      this.placePlayerObstacle(pointer.worldX, pointer.worldY);
     } else if (this.phase === PHASE.PLAY) {
       this.playerKick(pointer.worldX, pointer.worldY);
     }
@@ -183,6 +229,17 @@ export default class GameScene extends Phaser.Scene {
     if (velocity.length() > GAME.ballMaxSpeed) velocity.normalize().scale(GAME.ballMaxSpeed);
   }
 
+  recoverStuckBall(time) {
+    if (this.ball.body.velocity.length() >= 18) {
+      this.ballStillSince = 0;
+      return;
+    }
+    if (!this.ballStillSince) this.ballStillSince = time;
+    if (time - this.ballStillSince < 4000) return;
+    this.ball.setPosition(640, 380).body.setVelocity(0);
+    this.ballStillSince = time;
+  }
+
   checkGoal() {
     const insideMouth = this.ball.y - 12 > GAME.goal.top && this.ball.y + 12 < GAME.goal.bottom;
     if (!insideMouth) return;
@@ -198,7 +255,11 @@ export default class GameScene extends Phaser.Scene {
     this.ball.body.setVelocity(0);
     if (scorer === 'PLAYER') this.playerScore += 1;
     else this.cpuScore += 1;
-    this.bannerText.setText(`${scorer} GOAL!`).setVisible(true);
+    this.cameras.main.shake(180, 0.008);
+    this.bannerText.setText('GOAL!').setVisible(true);
+    this.time.delayedCall(800, () => {
+      if (this.phase === PHASE.GOAL) this.bannerText.setVisible(false);
+    });
     this.updateUI();
 
     if (this.playerScore >= GAME.winScore || this.cpuScore >= GAME.winScore) {
@@ -226,6 +287,10 @@ export default class GameScene extends Phaser.Scene {
   startPlay() {
     if (this.phase !== PHASE.BUILD) return;
     this.phase = PHASE.PLAY;
+    this.lastCpuPositionCheck = this.time.now;
+    this.cpuCheckPosition.set(this.cpu.x, this.cpu.y);
+    this.cpuStuckUntil = 0;
+    this.ballStillSince = 0;
     this.bannerText.setText('KICK OFF!').setVisible(true);
     this.time.delayedCall(500, () => {
       if (this.phase === PHASE.PLAY) this.bannerText.setVisible(false);
@@ -237,22 +302,32 @@ export default class GameScene extends Phaser.Scene {
     this.player.setPosition(260, 380).body.setVelocity(0);
     this.cpu.setPosition(1020, 380).body.setVelocity(0);
     this.ball.setPosition(640, 380).body.setVelocity(0);
+    this.ballStillSince = 0;
+    this.cpuCheckPosition.set(1020, 380);
+    this.lastCpuPositionCheck = this.time.now;
+    this.cpuStuckUntil = 0;
   }
 
   updatePreview() {
     const pointer = this.input.activePointer;
     const x = Phaser.Math.Snap.To(pointer.worldX, 10);
     const y = Phaser.Math.Snap.To(pointer.worldY, 10);
-    const valid = this.canPlaceWall(x, y, 'PLAYER') && this.playerPoints >= GAME.wallCost;
-    this.preview.setPosition(x, y).setFillStyle(valid ? 0x87d68d : 0xe55b5b, 0.55).setVisible(true);
+    const cost = this.selectedObstacle === 'BUMPER' ? GAME.bumperCost : GAME.wallCost;
+    const valid = this.canPlaceWall(x, y, 'PLAYER', this.selectedObstacle) && this.playerPoints >= cost;
+    this.preview.setVisible(this.selectedObstacle === 'WALL');
+    this.bumperPreview.setVisible(this.selectedObstacle === 'BUMPER');
+    const activePreview = this.selectedObstacle === 'BUMPER' ? this.bumperPreview : this.preview;
+    activePreview.setPosition(x, y).setFillStyle(valid ? 0xf2b84b : 0xe55b5b, 0.55);
   }
 
-  placePlayerWall(x, y) {
+  placePlayerObstacle(x, y) {
     x = Phaser.Math.Snap.To(x, 10);
     y = Phaser.Math.Snap.To(y, 10);
-    if (this.playerPoints < GAME.wallCost || !this.canPlaceWall(x, y, 'PLAYER')) return;
-    this.addWall(x, y, 0x8f979e);
-    this.playerPoints -= GAME.wallCost;
+    const cost = this.selectedObstacle === 'BUMPER' ? GAME.bumperCost : GAME.wallCost;
+    if (this.playerPoints < cost || !this.canPlaceWall(x, y, 'PLAYER', this.selectedObstacle)) return;
+    if (this.selectedObstacle === 'BUMPER') this.addBumper(x, y);
+    else this.addWall(x, y, 0x8f979e);
+    this.playerPoints -= cost;
     this.updateUI();
   }
 
@@ -268,32 +343,61 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  canPlaceWall(x, y, side) {
-    const halfW = GAME.wall.width / 2;
-    const halfH = GAME.wall.height / 2;
+  canPlaceWall(x, y, side, type = 'WALL') {
+    const width = type === 'BUMPER' ? GAME.bumper.radius * 2 : GAME.wall.width;
+    const height = type === 'BUMPER' ? GAME.bumper.radius * 2 : GAME.wall.height;
+    const halfW = width / 2;
+    const halfH = height / 2;
     const f = GAME.field;
     if (y - halfH < f.top + 12 || y + halfH > f.bottom - 12) return false;
     if (side === 'PLAYER' && (x - halfW < f.left + 20 || x + halfW > 580)) return false;
     if (side === 'CPU' && (x - halfW < 700 || x + halfW > f.right - 20)) return false;
-    if (side === 'PLAYER' && x < 225 && y > 235 && y < 485) return false;
-    if (side === 'CPU' && x > 1055 && y > 235 && y < 485) return false;
+    if (side === 'PLAYER' && x < 320 && y > 220 && y < 500) return false;
+    if (side === 'CPU' && x > 960 && y > 220 && y < 500) return false;
 
-    const candidate = new Phaser.Geom.Rectangle(x - halfW - 8, y - halfH - 8, GAME.wall.width + 16, GAME.wall.height + 16);
+    const candidate = new Phaser.Geom.Rectangle(x - halfW - 8, y - halfH - 8, width + 16, height + 16);
     const starts = [
       new Phaser.Geom.Rectangle(225, 345, 70, 70),
       new Phaser.Geom.Rectangle(985, 345, 70, 70),
       new Phaser.Geom.Rectangle(605, 345, 70, 70)
     ];
     if (starts.some((r) => Phaser.Geom.Intersects.RectangleToRectangle(candidate, r))) return false;
-    return !this.wallGroup.getChildren().some((wall) => {
-      const bounds = new Phaser.Geom.Rectangle(wall.x - halfW - 8, wall.y - halfH - 8, GAME.wall.width + 16, GAME.wall.height + 16);
+    const obstacles = [...this.wallGroup.getChildren(), ...this.bumperGroup.getChildren()];
+    return !obstacles.some((obstacle) => {
+      const obstacleW = obstacle.placementWidth;
+      const obstacleH = obstacle.placementHeight;
+      const bounds = new Phaser.Geom.Rectangle(obstacle.x - obstacleW / 2 - 8, obstacle.y - obstacleH / 2 - 8, obstacleW + 16, obstacleH + 16);
       return Phaser.Geom.Intersects.RectangleToRectangle(candidate, bounds);
     });
   }
 
   addWall(x, y, color) {
     const wall = this.add.rectangle(x, y, GAME.wall.width, GAME.wall.height, color).setStrokeStyle(2, 0x30353a);
+    wall.placementWidth = GAME.wall.width;
+    wall.placementHeight = GAME.wall.height;
     this.wallGroup.add(wall);
+  }
+
+  addBumper(x, y) {
+    const bumper = this.add.circle(x, y, GAME.bumper.radius, 0xf2b84b).setStrokeStyle(4, 0xffe19a);
+    bumper.placementWidth = GAME.bumper.radius * 2;
+    bumper.placementHeight = GAME.bumper.radius * 2;
+    this.bumperGroup.add(bumper);
+    bumper.body.setCircle(GAME.bumper.radius);
+  }
+
+  onBallBumper(ball, bumper) {
+    const bounce = new Phaser.Math.Vector2(ball.x - bumper.x, ball.y - bumper.y);
+    if (bounce.lengthSq() === 0) bounce.set(1, 0);
+    bounce.normalize().scale(GAME.bumper.ballBounceSpeed);
+    ball.body.setVelocity(bounce.x, bounce.y);
+  }
+
+  onActorBumper(actor, bumper) {
+    const push = new Phaser.Math.Vector2(actor.x - bumper.x, actor.y - bumper.y);
+    if (push.lengthSq() === 0) push.set(1, 0);
+    actor.bumpVelocity = push.normalize().scale(GAME.bumper.playerPushSpeed);
+    actor.bumpUntil = this.time.now + 120;
   }
 
   gameOver() {
@@ -311,7 +415,8 @@ export default class GameScene extends Phaser.Scene {
     this.scoreText.setText(`PLAYER ${this.playerScore}  :  ${this.cpuScore} CPU`);
     this.phaseText.setText(`${this.phase} PHASE`);
     if (this.phase === PHASE.BUILD) {
-      this.infoText.setText(`Build Points: ${this.playerPoints}   Wall Cost: ${GAME.wallCost}\nLeft Click: Place Wall   Right Click / Enter: Start Match`);
+      const selectedCost = this.selectedObstacle === 'BUMPER' ? GAME.bumperCost : GAME.wallCost;
+      this.infoText.setText(`Build Points: ${this.playerPoints}   Selected: ${this.selectedObstacle} (Cost ${selectedCost})\n1: Wall (${GAME.wallCost})   2: Bumper (${GAME.bumperCost})   Left Click: Place   Right Click / Enter: Start`);
     } else if (this.phase === PHASE.PLAY) {
       this.infoText.setText('WASD Move   Mouse Aim   Left Click Kick');
     } else if (this.phase === PHASE.GOAL) {
