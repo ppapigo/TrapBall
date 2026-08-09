@@ -108,6 +108,8 @@ export default class GameScene extends Phaser.Scene {
       () => this.add.circle(1020, 380, 22, 0xef4444).setStrokeStyle(3, 0xffbbbb));
     this.ball = this.createVisual(TEXTURE_KEYS.ball, 640, 380, 24, 24,
       () => this.add.circle(640, 380, 12, 0xffffff).setStrokeStyle(2, 0x222222));
+    this.player.baseScaleX = this.player.scaleX;
+    this.player.baseScaleY = this.player.scaleY;
     this.physics.add.existing(this.player);
     this.physics.add.existing(this.cpu);
     this.physics.add.existing(this.ball);
@@ -290,8 +292,14 @@ export default class GameScene extends Phaser.Scene {
 
   playKickFeedback() {
     this.tweens.killTweensOf(this.player);
-    this.player.setScale(1);
-    this.tweens.add({ targets: this.player, scale: 1.05, duration: 40, yoyo: true });
+    this.player.setScale(this.player.baseScaleX, this.player.baseScaleY);
+    this.tweens.add({
+      targets: this.player,
+      scaleX: this.player.baseScaleX * 1.05,
+      scaleY: this.player.baseScaleY * 1.05,
+      duration: 40,
+      yoyo: true
+    });
     this.createImpactRing(this.ball.x, this.ball.y, 0x9ed0ff, 16, 150);
   }
 
@@ -475,6 +483,8 @@ export default class GameScene extends Phaser.Scene {
     const size = GAME.bumper.radius * 2;
     const bumper = this.createVisual(TEXTURE_KEYS.bumper, x, y, size, size,
       () => this.add.circle(x, y, GAME.bumper.radius, 0xf2b84b).setStrokeStyle(4, 0xffe19a));
+    bumper.baseScaleX = bumper.scaleX;
+    bumper.baseScaleY = bumper.scaleY;
     bumper.placementWidth = GAME.bumper.radius * 2;
     bumper.placementHeight = GAME.bumper.radius * 2;
     this.bumperGroup.add(bumper);
@@ -541,8 +551,14 @@ export default class GameScene extends Phaser.Scene {
     if (this.time.now - (bumper.lastFeedbackTime || 0) < 120) return;
     bumper.lastFeedbackTime = this.time.now;
     this.tweens.killTweensOf(bumper);
-    bumper.setScale(1);
-    this.tweens.add({ targets: bumper, scale, duration: 55, yoyo: true });
+    bumper.setScale(bumper.baseScaleX, bumper.baseScaleY);
+    this.tweens.add({
+      targets: bumper,
+      scaleX: bumper.baseScaleX * scale,
+      scaleY: bumper.baseScaleY * scale,
+      duration: 55,
+      yoyo: true
+    });
     this.createImpactRing(bumper.x, bumper.y, 0xffd166, GAME.bumper.radius + 4, 180);
   }
 
